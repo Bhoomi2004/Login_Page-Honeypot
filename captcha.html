@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Captcha Verification</title>
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+</head>
+<body>
+    <h2>Suspicious Activity Detected</h2>
+    <p>Please verify you are a human to continue.</p>
+
+    <form method="POST" action="/captcha">
+        {{ form.hidden_tag() }}
+        <div class="g-recaptcha" data-sitekey="YOUR_SITE_KEY"></div>
+        <br>
+        <button type="submit">Verify</button>
+    </form>
+</body>
+</html>
