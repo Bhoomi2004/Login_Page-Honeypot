@@ -11,6 +11,7 @@ import smtplib
 from email.message import EmailMessage
 import threading
 import time
+import traceback
 import random
 import string
 from email.mime.text import MIMEText
@@ -24,13 +25,7 @@ app = Flask(__name__, template_folder='.')
 app.secret_key = 'your_secret_key'
 
 # Database connection
-conn = psycopg2.connect(
-    dbname="Minor",
-    user="postgres",
-    password="postgre@2025",
-    host="localhost",
-    port="5432"
-)
+conn = psycopg2.connect("postgresql://postgres:SupaDb%401305@db.zgoxbenfdplceawwmjpx.supabase.co:5432/postgres")
 cursor = conn.cursor()
 global_blocked = False
 
@@ -38,20 +33,29 @@ global_blocked = False
 def cleanup_and_reset_block():
     global global_blocked
     while True:
-        cursor.execute("DELETE FROM blocked_emails WHERE blocked_until <= NOW()")
-        conn.commit()
+        try:
+            # Delete expired blocked emails
+            cursor.execute("DELETE FROM blocked_emails WHERE blocked_until <= NOW()")
+            conn.commit()  # Commit after delete
+            
+            deleted_rows = cursor.rowcount
+            print(f"✅ Expired entries cleaned up. {deleted_rows} entries removed.")
 
-        deleted_rows = cursor.rowcount  # Get the number of deleted rows
-        print(f"✅ Expired entries cleaned up. {deleted_rows} entries removed.")
-
-        # Check if no blocked entries remain
-        cursor.execute("SELECT COUNT(*) FROM blocked_emails WHERE blocked_until > NOW()")
-        if cursor.fetchone()[0] == 0:
-            if global_blocked:
+            # Check if any active blocked entries remain
+            cursor.execute("SELECT COUNT(*) FROM blocked_emails WHERE blocked_until > NOW()")
+            active_count = cursor.fetchone()[0]
+            
+            if active_count == 0 and global_blocked:
                 print("✅ Resetting global block state.")
-                global_blocked = False  # Reset the block if no active blocked entries
-        
-        time.sleep(420)  # Run every 7 minutes
+                global_blocked = False
+
+        except Exception as e:
+            print("❌ Error occurred during cleanup:", e)
+            traceback.print_exc()
+            conn.rollback()  # Reset the failed transaction state before next iteration
+
+        time.sleep(420)  # Run every 7 minutes (420 seconds)
+
 
 # Email sending function
 
@@ -159,7 +163,50 @@ def login():
     cursor.execute("UPDATE users SET failed_attempts = %s WHERE email = %s", (failed_attempts, email))
 
     # Block logic
-    if failed_attempts % 5 == 0:
+    if failed_attempts >= 25:
+        cursor.execute("INSERT INTO blocked_emails (email, blocked_until) VALUES (%s, '9999-12-31')", (email,))
+        conn.commit()
+        send_email(
+            email, 
+            "Urgent: Permanent Account Block Notification", 
+            f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <h2 style="color: #d9534f;">Urgent: Permanent Account Block Notification</h2>
+                
+                <p>
+                    Dear User,<br><br>
+                    We regret to inform you that your account has been <strong>permanently blocked</strong> due to multiple 
+                    unsuccessful login attempts or suspicious activity.
+                </p>
+                
+                <p>
+                    For your security, access to this account has been restricted indefinitely. 
+                    If you believe this was a mistake or require further assistance, please contact our support team immediately.
+                </p>
+
+                <div style="text-align: center; margin: 20px 0;">
+                    <a href='https://example.com/contact-support' 
+                    style="display: inline-block; padding: 10px 20px; background-color: #d9534f; 
+                            color: #fff; text-decoration: none; border-radius: 4px;">
+                    Contact Support
+                    </a>
+                </div>
+
+                <p>
+                    Please avoid sharing your account credentials and ensure your devices are secure to prevent such incidents in the future.
+                </p>
+
+                <p style="margin-top: 20px;">Sincerely,<br> Your Security Team</p>
+            </body>
+            </html>
+            """
+        )
+
+        flash("Your email has been permanently blocked.", "danger")
+        return redirect(url_for("login_page"))
+    
+    elif failed_attempts % 5 == 0:
         cursor.execute(
             "INSERT INTO blocked_emails (email, blocked_until) VALUES (%s, NOW() + INTERVAL '5 minutes') "
             "ON CONFLICT (email) DO UPDATE SET blocked_until = NOW() + INTERVAL '5 minutes'", (email,))
@@ -210,49 +257,6 @@ def login():
         flash("Login failed. Your email is blocked.", "danger")
         return redirect(url_for("fake_login"))
 
-    if failed_attempts >= 25:
-        cursor.execute("INSERT INTO blocked_emails (email, blocked_until) VALUES (%s, '9999-12-31')", (email,))
-        conn.commit()
-        send_email(
-            email, 
-            "Urgent: Permanent Account Block Notification", 
-            f"""
-            <html>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                <h2 style="color: #d9534f;">Urgent: Permanent Account Block Notification</h2>
-                
-                <p>
-                    Dear User,<br><br>
-                    We regret to inform you that your account has been <strong>permanently blocked</strong> due to multiple 
-                    unsuccessful login attempts or suspicious activity.
-                </p>
-                
-                <p>
-                    For your security, access to this account has been restricted indefinitely. 
-                    If you believe this was a mistake or require further assistance, please contact our support team immediately.
-                </p>
-
-                <div style="text-align: center; margin: 20px 0;">
-                    <a href='https://example.com/contact-support' 
-                    style="display: inline-block; padding: 10px 20px; background-color: #d9534f; 
-                            color: #fff; text-decoration: none; border-radius: 4px;">
-                    Contact Support
-                    </a>
-                </div>
-
-                <p>
-                    Please avoid sharing your account credentials and ensure your devices are secure to prevent such incidents in the future.
-                </p>
-
-                <p style="margin-top: 20px;">Sincerely,<br> Your Security Team</p>
-            </body>
-            </html>
-            """
-        )
-
-        flash("Your email has been permanently blocked.", "danger")
-        return redirect(url_for("login_page"))
-
     conn.commit()
     flash("Invalid password.", "danger")
     return redirect(url_for("login_page"))
@@ -280,9 +284,9 @@ def check_blocked_email():
 def check_email_breach(email):
     # Simulate a 15% chance of breach, or check if the email is in known breaches
     known_breaches = [
-        "example1@example.com",
-        "testuser@breached.com",
-        "admin@demo.com"
+        "charlie03@example.com",
+        "eric05@example.com",
+        "george07@example.com"
     ]
     
     # Convert email to lowercase for case-insensitive comparison
