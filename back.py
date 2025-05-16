@@ -121,9 +121,7 @@ def login():
         return redirect(url_for("captcha_page"))
 
     # Check if the system is already in a blocked state
-    if global_blocked:
-        flash("Invalid password.", "danger")
-        return redirect(url_for("captcha_page"))
+    
 
     cursor.execute("SELECT COUNT(*) FROM failed_ips WHERE ip_address = %s AND failed_attempts >= 100", (ip,))
     ip_blocked = cursor.fetchone()[0]
@@ -136,14 +134,6 @@ def login():
     # Display "Your email is blocked" if the CURRENT email is blocked
     if blocked and reason == 'email':
         flash("Login failed. Your email is blocked.", "danger")
-        return redirect(url_for("login_page"))
-
-    # Check if ANY email is currently blocked and show "Invalid password" for other attempts
-    cursor.execute("SELECT COUNT(*) FROM blocked_emails WHERE blocked_until > NOW()")
-    active_blocks = cursor.fetchone()[0]
-
-    if active_blocks > 0 and not (blocked and reason == 'email'):
-        flash("Invalid password.", "danger")
         return redirect(url_for("login_page"))
 
     # Continue with normal login logic
@@ -211,10 +201,15 @@ def login():
             "INSERT INTO blocked_emails (email, blocked_until) VALUES (%s, NOW() + INTERVAL '5 minutes') "
             "ON CONFLICT (email) DO UPDATE SET blocked_until = NOW() + INTERVAL '5 minutes'", (email,))
         cursor.execute(
-            "INSERT INTO failed_ips (ip_address, failed_attempts, last_attempt) VALUES (%s, 5, NOW()) "
-            "ON CONFLICT (ip_address) DO UPDATE SET failed_attempts = 5, last_attempt = NOW()", (ip,))
+        """
+        INSERT INTO failed_ips (ip_address, failed_attempts, last_attempt)
+        VALUES (%s, 1, NOW())
+        ON CONFLICT (ip_address)
+        DO UPDATE SET failed_attempts = failed_ips.failed_attempts + 1, last_attempt = NOW()
+        """,
+        (ip,)
+    )
         
-        global_blocked = True  # Enable global block state
         
         send_email(
             email, 
