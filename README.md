@@ -28,5 +28,5 @@ To enhance visibility and proactive defense, the captured data is visualized thr
 ## ⚙️ Technologies Used
 
 * Backend: Python (for logging, analysis, and threat detection)
-* Database: PostgreSQL (for secure and structured data storage)
+* Database: SupaBase (for secure and structured data storage)
 * Visualization: Power BI (for dynamic and interactive attack pattern dashboards)
